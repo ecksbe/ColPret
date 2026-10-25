@@ -122,7 +122,8 @@ def get_chinchila():
 def get_overtrain():
 
     df = pd.read_csv("raw_data/overtrain/overtrain.csv")
-    df = df.rename(columns={"loss": "openLM_loss",
+    # trajectory losses are training losses; the official OpenLM eval loss comes from the downstream file below
+    df = df.rename(columns={"loss": "train_loss",
                    "tokens": "tokens_seen", "name": "model_name"})
     df["loss_cols"] = [["train_loss"]] * len(df)
     name_to_params = {
@@ -156,7 +157,7 @@ def get_overtrain():
     df["data"] = df["model_name"].apply(data_from_name)
     df["model_type"] = "overtrain"
     df['arch'] = "dec"
-    df["loss_cols"] = [["openLM_loss"]] * len(df)
+    df["loss_cols"] = [["train_loss"]] * len(df)
     df['flops'] = np.nan
 
     downstream_df = pd.read_csv(
@@ -167,7 +168,7 @@ def get_overtrain():
         params_from_name).apply(to_int)
     downstream_df["tokens_seen"] = downstream_df.apply(lambda row: float(row["flops"]) / 6 / to_int(row["num_params"]),
                                                        axis=1)
-    idxs = df.groupby(["model_name"])["openLM_loss"].idxmin().to_dict()
+    idxs = df.groupby(["model_name"])["train_loss"].idxmin().to_dict()
     downstream_df.index = [idxs.get(name, name)
                            for name in downstream_df["name"]]
     downstream_df = downstream_df.drop(
@@ -176,6 +177,9 @@ def get_overtrain():
     downstream_df.columns = [col.replace(
         "err", "acc") for col in downstream_df.columns]
     df = df.combine_first(downstream_df).reset_index(drop=True)
+    official = downstream_df.set_index("model_name")["openLM_loss"]
+    kept = df.dropna(subset=["openLM_loss"]).set_index("model_name")["openLM_loss"]
+    assert np.allclose(kept.loc[official.index], official), "official OpenLM eval loss lost in merge"
     loss_cols = [
         col for col in df.columns if ("loss" in col or "acc" in col) and "cols" not in col]
     df["loss_cols"] = df.apply(lambda row: tuple(
